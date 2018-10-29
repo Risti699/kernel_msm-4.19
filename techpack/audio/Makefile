@@ -1,6 +1,18 @@
 ifeq (,$(filter y,$(CONFIG_ARCH_MSM8937) $(CONFIG_ARCH_MSM8953)))
 
 # auto-detect subdirs
+ifeq ($(CONFIG_ARCH_SDM845), y)
+include $(srctree)/techpack/audio/config/sdm845auto.conf
+export
+endif
+ifeq ($(CONFIG_ARCH_SDM450), y)
+include $(srctree)/techpack/audio/config/sdm450auto.conf
+export
+endif
+ifeq ($(CONFIG_ARCH_SDM670), y)
+include $(srctree)/techpack/audio/config/sdm710auto_static.conf
+export
+endif
 ifeq ($(CONFIG_ARCH_SDXPOORWILLS), y)
 include $(srctree)/techpack/audio/config/sdxpoorwillsauto.conf
 export $(shell sed 's/=.*//' $(srctree)/techpack/audio/config/sdxpoorwillsauto.conf)
@@ -45,7 +57,11 @@ ifeq ($(CONFIG_ARCH_SDXPOORWILLS), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/sdxpoorwillsautoconf.h
 endif
-ifeq ($(CONFIG_ARCH_SM8150), y)
+ifeq ($(CONFIG_ARCH_SDM450), y)
+LINUXINCLUDE    += \
+                -include $(srctree)/techpack/audio/config/sdm450autoconf.h
+endif
+ifeq ($(CONFIG_ARCH_SDM670), y)
 LINUXINCLUDE    += \
                 -include $(srctree)/techpack/audio/config/sm8150autoconf.h
 endif
