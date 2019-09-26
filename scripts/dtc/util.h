@@ -35,9 +35,6 @@
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
-#define stringify(s)	stringify_(s)
-#define stringify_(s)	#s
-
 static inline void NORETURN PRINTF(1, 2) die(const char *str, ...)
 {
 	va_list ap;

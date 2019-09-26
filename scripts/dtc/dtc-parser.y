@@ -201,8 +201,16 @@ devicetree:
 			} else {
 				struct node *target = get_node_by_ref($1, $2);
 
-				if (target)
-					merge_nodes(target, $3);
+			if (target) {
+				merge_nodes(target, $3);
+			} else {
+				/*
+				 * We rely on the rule being always:
+				 *   versioninfo plugindecl memreserves devicetree
+				 * so $-1 is what we want (plugindecl)
+				 */
+				if ($<flags>-1 & DTSF_PLUGIN)
+					add_orphan_node($1, $3, $2);
 				else
 					ERROR(&@2, "Label or path %s not found", $2);
 			}
@@ -220,17 +228,10 @@ devicetree:
 
 			$$ = $1;
 		}
-	| devicetree DT_OMIT_NO_REF DT_REF ';'
+	| /* empty */
 		{
-			struct node *target = get_node_by_ref($1, $3);
-
-			if (target)
-				omit_node_if_unused(target);
-			else
-				ERROR(&@3, "Label or path %s not found", $3);
-
-
-			$$ = $1;
+			/* build empty node */
+			$$ = name_node(build_node(NULL, NULL), "");
 		}
 	;
 
