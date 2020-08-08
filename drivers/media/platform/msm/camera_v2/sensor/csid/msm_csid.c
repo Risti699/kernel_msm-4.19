@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2011-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2018, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -76,7 +76,7 @@
 #define FALSE  0
 
 #define MAX_LANE_COUNT 4
-#define CSID_TIMEOUT msecs_to_jiffies(100)
+#define CSID_TIMEOUT msecs_to_jiffies(1000)
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
