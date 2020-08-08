@@ -1,6 +1,14 @@
-/* SPDX-License-Identifier: GPL-2.0 */
-/*
- * Copyright (c) 2018-2021 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018 The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 XiaoMi, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef __SMB5_CHARGER_H
@@ -67,10 +75,8 @@ enum print_reason {
 #define HW_LIMIT_VOTER			"HW_LIMIT_VOTER"
 #define PL_SMB_EN_VOTER			"PL_SMB_EN_VOTER"
 #define FORCE_RECHARGE_VOTER		"FORCE_RECHARGE_VOTER"
-#define LPD_VOTER			"LPD_VOTER"
-#define FCC_STEPPER_VOTER		"FCC_STEPPER_VOTER"
-#define SW_THERM_REGULATION_VOTER	"SW_THERM_REGULATION_VOTER"
-#define JEITA_ARB_VOTER			"JEITA_ARB_VOTER"
+#define UNKNOWN_CHARGER			"UNKNOWN_CHARGER"
+#define AICL_THRESHOLD_VOTER		"AICL_THRESHOLD_VOTER"
 #define MOISTURE_VOTER			"MOISTURE_VOTER"
 #define HVDCP2_ICL_VOTER		"HVDCP2_ICL_VOTER"
 #define HVDCP2_12V_ICL_VOTER		"HVDCP2_12V_ICL_VOTER"
@@ -91,6 +97,8 @@ enum print_reason {
 #define OVERHEAT_LIMIT_VOTER		"OVERHEAT_LIMIT_VOTER"
 #define TYPEC_SWAP_VOTER		"TYPEC_SWAP_VOTER"
 
+#define THERMAL_CONFIG_FB		1
+#define XIAOMI_CHARGER_RUNIN 	//lct add for xiaomi RUNIN 20181105
 #define BOOST_BACK_STORM_COUNT	3
 #define WEAK_CHG_STORM_COUNT	8
 
@@ -102,16 +110,9 @@ enum print_reason {
 
 #define SDP_100_MA			100000
 #define SDP_CURRENT_UA			500000
-
-static int cdp_current_ua = 1500000;
-#define CDP_CURRENT_UA			cdp_current_ua
-
-static int dcp_current_ua = 1500000;
-#define DCP_CURRENT_UA			dcp_current_ua
-
-static int hvdcp_current_ua = 3000000;
-#define HVDCP_CURRENT_UA		hvdcp_current_ua
-
+#define CDP_CURRENT_UA			1500000
+#define DCP_CURRENT_UA			2000000
+#define HVDCP_CURRENT_UA		3000000
 #define TYPEC_DEFAULT_CURRENT_UA	900000
 #define TYPEC_MEDIUM_CURRENT_UA		1500000
 static int typec_high_current_ua = 3000000;
@@ -566,10 +567,8 @@ struct smb_charger {
 	int			fake_batt_status;
 	bool			step_chg_enabled;
 	bool			sw_jeita_enabled;
-	bool			jeita_arb_enable;
-	bool			typec_legacy_use_rp_icl;
-#if IS_ENABLED(CONFIG_MACH_XIAOMI_SDM439)
-	bool			xiaomi_sdm439_hw_jeita_enabled;
+#ifdef XIAOMI_CHARGER_RUNIN
+	int			charging_enabled;
 #endif
 	bool			is_hdc;
 	bool			chg_done;
@@ -630,19 +629,10 @@ struct smb_charger {
 	int			charge_full_cc;
 	int			cc_soc_ref;
 	int			last_cc_soc;
-	int			term_vbat_uv;
-	int			usbin_forced_max_uv;
-	int			init_thermal_ua;
-	u32			comp_clamp_level;
-	int			wls_icl_ua;
-	int			cutoff_count;
-	bool			dcin_aicl_done;
-	bool			hvdcp3_standalone_config;
-	bool			dcin_icl_user_set;
-	bool			dpdm_enabled;
-	bool			apsd_ext_timeout;
-	bool			qc3p5_detected;
-
+	#ifdef THERMAL_CONFIG_FB
+	struct notifier_block notifier;
+	struct work_struct fb_notify_work;
+	#endif
 	/* workaround flag */
 	u32			wa_flags;
 	int			boost_current_ua;
@@ -669,24 +659,10 @@ struct smb_charger {
 	u32			headroom_mode;
 	bool			flash_init_done;
 	bool			flash_active;
-	u32			irq_status;
 
-	/* wireless */
-	int			dcin_uv_count;
-	ktime_t			dcin_uv_last_time;
-	int			last_wls_vout;
-
-#if IS_ENABLED(CONFIG_MACH_FAMILY_XIAOMI_PINE)
-	bool			xiaomi_pine_is_adapter_idn;
-#endif
-
-#if IS_ENABLED(CONFIG_MACH_FAMILY_XIAOMI_OLIVE)
-	unsigned long xiaomi_olive_recent_collapse_time;
-	bool		  xiaomi_olive_hvdcp_disabled;
-	bool		  xiaomi_olive_collapsed;
-	struct delayed_work xiaomi_olive_hw_suchg_detect_work;
-	int 		  xiaomi_olive_count;
-#endif
+	/* otg control */
+	bool			otg_en_ctrl;
+	struct alarm	otg_ctrl_timer;
 };
 
 int smblib_read(struct smb_charger *chg, u16 addr, u8 *val);
@@ -772,6 +748,10 @@ int smblib_get_prop_batt_iterm(struct smb_charger *chg,
 				union power_supply_propval *val);
 int smblib_set_prop_input_suspend(struct smb_charger *chg,
 				const union power_supply_propval *val);
+#ifdef XIAOMI_CHARGER_RUNIN
+int lct_set_prop_input_suspend(struct smb_charger *chg,
+				const union power_supply_propval *val);
+#endif
 int smblib_set_prop_batt_capacity(struct smb_charger *chg,
 				const union power_supply_propval *val);
 int smblib_set_prop_batt_status(struct smb_charger *chg,
@@ -896,19 +876,13 @@ int smblib_get_iio_channel(struct smb_charger *chg, const char *propname,
 int smblib_read_iio_channel(struct smb_charger *chg, struct iio_channel *chan,
 							int div, int *data);
 int smblib_configure_hvdcp_apsd(struct smb_charger *chg, bool enable);
-int smblib_icl_override(struct smb_charger *chg, enum icl_override_mode mode);
-enum alarmtimer_restart smblib_lpd_recheck_timer(struct alarm *alarm,
-				ktime_t time);
-int smblib_toggle_smb_en(struct smb_charger *chg, int toggle);
-void smblib_hvdcp_detect_enable(struct smb_charger *chg, bool enable);
-void smblib_hvdcp_hw_inov_enable(struct smb_charger *chg, bool enable);
-void smblib_hvdcp_exit_config(struct smb_charger *chg);
-void smblib_apsd_enable(struct smb_charger *chg, bool enable);
-int smblib_force_vbus_voltage(struct smb_charger *chg, u8 val);
-int smblib_get_irq_status(struct smb_charger *chg,
-				union power_supply_propval *val);
-int smblib_get_qc3_main_icl_offset(struct smb_charger *chg, int *offset_ua);
+int smblib_icl_override(struct smb_charger *chg, bool override);
+//begin for the total capacity of batt in  2018.11.05
+int smblib_get_prop_battery_full_design(struct smb_charger *chg,
+				     union power_supply_propval *val);
+//end for the total capacity of batt in  2018.11.05
 
 int smblib_init(struct smb_charger *chg);
 int smblib_deinit(struct smb_charger *chg);
+void smb5_notify_usb_host(struct smb_charger *chg, bool enable);
 #endif /* __SMB5_CHARGER_H */
