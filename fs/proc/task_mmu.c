@@ -1666,75 +1666,7 @@ const struct file_operations proc_pagemap_operations = {
 #endif /* CONFIG_PROC_PAGE_MONITOR */
 
 #ifdef CONFIG_PROCESS_RECLAIM
-static BLOCKING_NOTIFIER_HEAD(proc_reclaim_notifier);
-
-int proc_reclaim_notifier_register(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_register(&proc_reclaim_notifier, nb);
-}
-
-int proc_reclaim_notifier_unregister(struct notifier_block *nb)
-{
-	return blocking_notifier_chain_unregister(&proc_reclaim_notifier, nb);
-}
-
-static void proc_reclaim_notify(unsigned long pid, void *rp)
-{
-	blocking_notifier_call_chain(&proc_reclaim_notifier, pid, rp);
-}
-
-int reclaim_address_space(struct address_space *mapping,
-			struct reclaim_param *rp)
-{
-	struct radix_tree_iter iter;
-	void __rcu **slot;
-	pgoff_t start;
-	struct page *page;
-	LIST_HEAD(page_list);
-	int reclaimed;
-	int ret = NOTIFY_OK;
-
-	lru_add_drain();
-	start = 0;
-	rcu_read_lock();
-
-	radix_tree_for_each_slot(slot, &mapping->i_pages, &iter, start) {
-
-		page = radix_tree_deref_slot(slot);
-
-		if (radix_tree_deref_retry(page)) {
-			slot = radix_tree_iter_retry(&iter);
-			continue;
-		}
-
-		if (radix_tree_exceptional_entry(page))
-			continue;
-
-		if (isolate_lru_page(page))
-			continue;
-
-		rp->nr_scanned++;
-
-		list_add(&page->lru, &page_list);
-		inc_node_page_state(page, NR_ISOLATED_ANON +
-				page_is_file_cache(page));
-
-		if (need_resched()) {
-			slot = radix_tree_iter_resume(slot, &iter);
-			cond_resched_rcu();
-		}
-	}
-	rcu_read_unlock();
-	reclaimed = reclaim_pages_from_list(&page_list, NULL);
-	rp->nr_reclaimed += reclaimed;
-
-	if (rp->nr_scanned >= rp->nr_to_reclaim)
-		ret = NOTIFY_DONE;
-
-	return ret;
-}
-
-static int reclaim_pte_range(pmd_t *pmd, unsigned long addr,
+int reclaim_pte_range(pmd_t *pmd, unsigned long addr,
 				unsigned long end, struct mm_walk *walk)
 {
 	struct reclaim_param *rp = walk->private;
@@ -1761,18 +1693,10 @@ cont:
 		if (!page)
 			continue;
 
-		if (isolate_lru_page(compound_head(page)))
+		if (page_mapcount(page) != 1)
 			continue;
 
-		/* MADV_FREE clears pte dirty bit and then marks the page
-		 * lazyfree (clear SwapBacked). Inbetween if this lazyfreed page
-		 * is touched by user then it becomes dirty.  PPR in
-		 * shrink_page_list in try_to_unmap finds the page dirty, marks
-		 * it back as PageSwapBacked and skips reclaim. This can cause
-		 * isolated count mismatch.
-		 */
-		if (PageAnon(page) && !PageSwapBacked(page)) {
-			putback_lru_page(page);
+		if (isolate_lru_page(page))
 			continue;
 		}
 
@@ -1795,7 +1719,7 @@ cont:
 		goto cont;
 
 	cond_resched();
-	return 0;
+	return (rp->nr_to_reclaim == 0) ? -EPIPE : 0;
 }
 
 enum reclaim_type {
@@ -1885,6 +1809,7 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 	unsigned long start = 0;
 	unsigned long end = 0;
 	struct reclaim_param rp;
+	int ret;
 
 	memset(buffer, 0, sizeof(buffer));
 	if (count > sizeof(buffer) - 1)
@@ -1961,9 +1886,11 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 				continue;
 
 			rp.vma = vma;
-			walk_page_range(max(vma->vm_start, start),
+			ret = walk_page_range(max(vma->vm_start, start),
 					min(vma->vm_end, end),
 					&reclaim_walk);
+			if (ret)
+				break;
 			vma = vma->vm_next;
 		}
 	} else {
@@ -1978,8 +1905,10 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 				continue;
 
 			rp.vma = vma;
-			walk_page_range(vma->vm_start, vma->vm_end,
+			ret = walk_page_range(vma->vm_start, vma->vm_end,
 				&reclaim_walk);
+			if (ret)
+				break;
 		}
 	}
 
