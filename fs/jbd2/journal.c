@@ -5,6 +5,7 @@
  * Written by Stephen C. Tweedie <sct@redhat.com>, 1998
  *
  * Copyright 1998 Red Hat corp --- All Rights Reserved
+ * Copyright (C) 2020 XiaoMi, Inc.
  *
  * Generic filesystem journal-writing code; part of the ext2fs
  * journaling system.
@@ -736,22 +737,22 @@ int jbd2_log_wait_commit(journal_t *journal, tid_t tid)
 	return err;
 }
 
-/* Return 1 when transaction with given tid has already committed. */
-int jbd2_transaction_committed(journal_t *journal, tid_t tid)
+int jbd2_transaction_need_wait(journal_t *journal, tid_t tid)
 {
-	int ret = 1;
-
+	int need_to_wait = 1;
 	read_lock(&journal->j_state_lock);
 	if (journal->j_running_transaction &&
-	    journal->j_running_transaction->t_tid == tid)
-		ret = 0;
-	if (journal->j_committing_transaction &&
-	    journal->j_committing_transaction->t_tid == tid)
-		ret = 0;
+	journal->j_running_transaction->t_tid == tid) {
+		if (journal->j_commit_request != tid) {
+			/* transaction not yet started, so request it */
+			need_to_wait = 1;
+		}
+	} else if (!(journal->j_committing_transaction &&
+		journal->j_committing_transaction->t_tid == tid))
+			need_to_wait = 0;
 	read_unlock(&journal->j_state_lock);
-	return ret;
+	return need_to_wait;
 }
-EXPORT_SYMBOL(jbd2_transaction_committed);
 
 /*
  * When this function returns the transaction corresponding to tid
@@ -2591,6 +2592,8 @@ void jbd2_journal_init_jbd_inode(struct jbd2_inode *jinode, struct inode *inode)
 	jinode->i_flags = 0;
 	jinode->i_dirty_start = 0;
 	jinode->i_dirty_end = 0;
+	jinode->i_next_dirty_start = 0;
+	jinode->i_next_dirty_end = 0;
 	INIT_LIST_HEAD(&jinode->i_list);
 }
 
