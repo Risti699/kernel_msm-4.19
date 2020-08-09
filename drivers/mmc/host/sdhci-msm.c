@@ -5,6 +5,19 @@
  *
  * drivers/mmc/host/sdhci-msm.c - Qualcomm Technologies, Inc. MSM SDHCI Platform
  * driver source file
+ *
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2020 XiaoMi, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
  */
 
 #include <linux/module.h>
@@ -31,6 +44,8 @@
 #include <linux/iopoll.h>
 #include <linux/msm-bus.h>
 #include <linux/pm_runtime.h>
+#include <linux/nvmem-consumer.h>
+#include <linux/device.h>
 #include <trace/events/mmc.h>
 #include <linux/clk/qcom.h>
 
@@ -5249,107 +5264,48 @@ static bool sdhci_msm_is_bootdevice(struct device *dev)
 	return true;
 }
 
-static int sdhci_msm_setup_ice_clk(struct sdhci_msm_host *msm_host,
-						struct platform_device *pdev)
+/* add sdcard slot detect status for factory mode
+ *    begin
+ *    */
+static struct kobject *card_slot_device = NULL;
+static struct sdhci_msm_host *host_with_slot_detect = NULL;
+
+static ssize_t card_slot_status_show(struct device *dev,
+					       struct device_attribute *attr, char *buf)
 {
-	int ret = 0;
-
-	/* Setup SDC ICE clock */
-	msm_host->ice_clk = devm_clk_get(&pdev->dev, "ice_core_clk");
-	if (!IS_ERR(msm_host->ice_clk)) {
-		/* ICE core has only one clock frequency for now */
-		ret = clk_set_rate(msm_host->ice_clk,
-				msm_host->pdata->ice_clk_max);
-		if (ret) {
-			dev_err(&pdev->dev, "ICE_CLK rate set failed (%d) for %u\n",
-				ret,
-				msm_host->pdata->ice_clk_max);
-			return ret;
-		}
-		ret = clk_prepare_enable(msm_host->ice_clk);
-		if (ret)
-			return ret;
-		msm_host->ice_clk_rate =
-			msm_host->pdata->ice_clk_max;
-	}
-
-	return ret;
+	if (host_with_slot_detect && gpio_is_valid(host_with_slot_detect->pdata->status_gpio)) {
+		return snprintf(buf, PAGE_SIZE, "%d\n", mmc_gpio_get_cd(host_with_slot_detect->mmc));
+	} else
+		return -EINVAL;
 }
 
-/*
- * Changes the bus speed mode for eMMC only as per the
- * kernel command line parameter passed in the boot image.
- * If not set remains in HS400ES mode.
- */
-static void sdhci_msm_select_bus_mode(struct sdhci_host *host)
+static DEVICE_ATTR(card_slot_status, S_IRUGO ,
+						card_slot_status_show, NULL);
+
+int32_t card_slot_init_device_name(void)
 {
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_msm_host *msm_host = pltfm_host->priv;
-	enum select_bus_mode {SELECT_HS400ES, SELECT_HS400,
-				SELECT_HS200, SELECT_DDR52,
-				SELECT_HS};
-
-	if (bus_mode) {
-		if (bus_mode == SELECT_HS400) {
-			msm_host->enhanced_strobe = false;
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS400_ES);
-		} else if (bus_mode == SELECT_HS200) {
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS400_ES);
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS400);
-		} else if (bus_mode == SELECT_DDR52) {
-			host->quirks2 |= SDHCI_QUIRK2_BROKEN_HS200;
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS400_ES);
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS400);
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS200);
-		} else if (bus_mode == SELECT_HS) {
-			host->quirks2 |= SDHCI_QUIRK2_BROKEN_HS200;
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS400_ES);
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS400);
-			msm_host->pdata->caps2 &= ~(MMC_CAP2_HS200);
-			msm_host->pdata->caps &= ~(MMC_CAP_3_3V_DDR |
-					MMC_CAP_1_8V_DDR | MMC_CAP_1_2V_DDR);
-			msm_host->mmc->clk_scaling.lower_bus_speed_mode &=
-				~(MMC_SCALING_LOWER_DDR52_MODE);
-		}
-		pr_info("%s: %s: bus_mode=%d set using kernel command line\n",
-			mmc_hostname(host->mmc), __func__, bus_mode);
-	}
-}
-
-static int sdhci_msm_add_host(struct sdhci_msm_host *msm_host)
-{
-	struct platform_device *pdev = msm_host->pdev;
-	struct device *dev = &pdev->dev;
-	struct device_node *node = pdev->dev.of_node;
-	struct sdhci_host *host = msm_host->host;
-	int ret;
-
-	if (msm_host->added_host) {
-		dev_err(dev, "%s: Have already added host\n", __func__);
+	int32_t error = 0;
+	if(card_slot_device != NULL){
+		pr_err("card_slot already created\n");
 		return 0;
 	}
-
-	if (of_device_is_compatible(node, "qcom,sdhci-msm-cqe")) {
-		dev_dbg(dev, "node with qcom,sdhci-msm-cqe\n");
-		ret = sdhci_msm_cqe_add_host(host, pdev);
-	} else {
-		ret = sdhci_add_host(host);
+	card_slot_device = kobject_create_and_add("card_slot", NULL);
+	if (card_slot_device == NULL) {
+		printk("%s: card_slot register failed\n", __func__);
+		error = -ENOMEM;
+		return error ;
 	}
-	if (ret) {
-		dev_err(dev, "Add host failed (%d)\n", ret);
-		goto out;
+	error = sysfs_create_file(card_slot_device, &dev_attr_card_slot_status.attr);
+	if (error) {
+		printk("%s: card_slot_status_create_file failed\n", __func__);
+		kobject_del(card_slot_device);
 	}
 
-	pm_runtime_set_active(&pdev->dev);
-	pm_runtime_enable(&pdev->dev);
-	pm_runtime_set_autosuspend_delay(&pdev->dev, MSM_AUTOSUSPEND_DELAY_MS);
-	pm_runtime_use_autosuspend(&pdev->dev);
-
-	msm_host->added_host = true;
-
-out:
-	return ret;
+	return 0 ;
 }
+/* add sdcard slot detect status for factory mode
+ *    end
+ *    */
 
 static int sdhci_msm_probe(struct platform_device *pdev)
 {
@@ -5750,6 +5706,9 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "%s: Failed to request card detection IRQ %d\n",
 					__func__, ret);
 			goto vreg_deinit;
+		}else{
+			host_with_slot_detect = msm_host;
+			card_slot_init_device_name();
 		}
 	}
 

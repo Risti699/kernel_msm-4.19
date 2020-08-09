@@ -2,6 +2,7 @@
  * Header for MultiMediaCard (MMC)
  *
  * Copyright 2002 Hewlett-Packard Company
+ * Copyright (C) 2020 XiaoMi, Inc.
  *
  * Use consistent with the GNU GPL is permitted,
  * provided that this copyright notice is
@@ -303,6 +304,9 @@ static inline bool mmc_op_multi(u32 opcode)
 #define EXT_CSD_DEVICE_LIFE_TIME_EST_TYP_B	269	/* RO */
 #define EXT_CSD_CMDQ_DEPTH		307	/* RO */
 #define EXT_CSD_CMDQ_SUPPORT		308	/* RO */
+#define EXT_CSD_LIFE_TIME_EST_TYP_A    268     /* RO */
+#define EXT_CSD_LIFE_TIME_EST_TYP_B    269     /* RO */
+#define EXT_CSD_BARRIER_SUPPORT		486	/* RO */
 #define EXT_CSD_SUPPORTED_MODE		493	/* RO */
 #define EXT_CSD_TAG_UNIT_SIZE		498	/* RO */
 #define EXT_CSD_DATA_TAG_SUPPORT	499	/* RO */
